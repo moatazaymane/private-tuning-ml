@@ -196,22 +196,22 @@ def run_single_seed_rare(
 
 if __name__ == "__main__":
     from matplotlib.ticker import MaxNLocator
-
+    import seaborn as sns
     from random_stopping_sg import privacy_analysis
 
-    k = 2**8
-    num_seeds = 10
+    k = 2**10
+    num_seeds = 1
     n, bs, MAX_PHYSICAL_BATCH_SIZE = 50000, 25, 25
     max_grad_norm = 1
     q = bs / n
-    I = 15000
-    sigma = 0.7
+    I = 10
+    sigma = 1
     total_delta = 1 / n
     C_values = np.arange(4, 20, 6)
     order_start, order_end, step_size = 1.5, 100, 0.05
     orders = np.arange(order_start, order_end, step_size)
-    UCB, beta = False, 0.001
-    plot_rare, C, rares = True, 10, [1, 2, 3, 4, 5, 6, 7, 8, 10]
+    UCB, beta = True, 0.001
+    plot_rare, C, rares = True, 10, [.5, 1, 2, 3, 4, 5, 6, 7, 8, 10]
     found = False
     _epsilon_dpsgd = privacy_analysis.compute_rdp(
         q=q, noise_multiplier=sigma, steps=I, orders=orders
@@ -268,7 +268,7 @@ if __name__ == "__main__":
                 )
             )
 
-    plt.style.use("seaborn-v0_8-darkgrid")
+    sns.set_style("whitegrid")
     fig, ax = plt.subplots(figsize=(6, 4))
 
     if plot_rare:
@@ -295,31 +295,24 @@ if __name__ == "__main__":
         mean_general_values = [np.mean(max_mean_general[rare]) for rare in rares]
         std_general_values = [np.std(max_mean_general[rare]) for rare in rares]
 
-        plt.plot(
-            rare_probas_percent,
-            mean_sh_values,
-            label=f"SH - $\epsilon = {int(C*epsilon_adp)}$",
-            color="blue",
-        )
-        plt.fill_between(
-            rare_probas_percent,
-            np.array(mean_sh_values) - np.array(std_sh_values),
-            np.array(mean_sh_values) + np.array(std_sh_values),
-            color="blue",
-            alpha=0.2,
-        )
+
+        color_2 = "#D6AEDD"   # Muted pink (for μ1)
+        color_1 = "#B22222"  # Muted Orange (for RUE)
+        color_3 = "#0073e6"  # Dark Blue (for SH) #1f3a5f
+
 
         plt.plot(
             rare_probas_percent,
             mean_rs_values,
             label=f"RUE - $\epsilon = {int(C*epsilon_adp)}$",
-            color="red",
+            color=color_1,  # Darker blue for the RUE line
         )
+
         plt.fill_between(
             rare_probas_percent,
             np.array(mean_rs_values) - np.array(std_rs_values),
             np.array(mean_rs_values) + np.array(std_rs_values),
-            color="red",
+            color=color_1,
             alpha=0.2,
         )
 
@@ -327,21 +320,30 @@ if __name__ == "__main__":
             rare_probas_percent,
             mean_general_values,
             label="$\mu_1$",
-            linestyle="--",
-            color="orange",
+            linestyle="--",  # Dashed line style
+            color=color_2,  # Muted orange for μ1
         )
+
+        # Adding the SH plot with dark blue
+        plt.plot(
+            rare_probas_percent,
+            mean_sh_values,
+            label=f"SH - $\epsilon = {int(C*epsilon_adp)}$",
+            color=color_3,  # Dark blue for SH
+        )
+
         plt.fill_between(
             rare_probas_percent,
-            np.array(mean_general_values) - np.array(std_general_values),
-            np.array(mean_general_values) + np.array(std_general_values),
-            color="orange",
+            np.array(mean_sh_values) - np.array(std_sh_values),
+            np.array(mean_sh_values) + np.array(std_sh_values),
+            color=color_3,
             alpha=0.2,
         )
 
         plt.xlabel("$R$ (%)")
         plt.ylabel("$\mu$")
         plt.legend(loc="lower right")
-        # plt.savefig(f'figures/SH-RS-rate-k-{k}-C-{C}.png', dpi=300)
+        plt.savefig(f'figures/SH-RS-rate-k-{k}-C-{C}-sig-{sigma}-I-{I}.png', dpi=300)
         plt.show()
 
     elif found:

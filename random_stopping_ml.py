@@ -21,6 +21,7 @@ def RS_ML(
     epsilon_dpsgd: dict,
     epsilon,
     delta,
+    base_path,
     sigma,
     max_grad_norm,
     device,
@@ -31,6 +32,7 @@ def RS_ML(
     tau=None,
     rem=None,
     restart=True,
+    eval_after=None
 ):
 
     fix_seed(experiment=seed)
@@ -58,24 +60,27 @@ def RS_ML(
         rem = int(tau)
 
     print(f"TAU {tau}")
+    trained = set()
 
     for _ in range(rem):
         idx = np.random.choice(list(A.keys()), size=1)[0]
         # print((idx, list(A.keys())))
-        if restart == False and os.path.exists(f"experiments/rs_ml/{seed}/{idx}.json"):
+        if idx in trained:
             continue
+        trained.add(idx)
 
-        eval_points = np.round(np.linspace(1, I, 100)).astype(int)
         accuracies, _ = train_model(
             train_ds=train_ds,
             test_ds=test_ds,
+            model_index=idx,
             seed=seed,
             model_info=A[idx]["info"],
             model_id=idx,
             iterations=I,
-            eval_points=eval_points,
             device=device,
             MAX_PHYSICAL_BATCH_SIZE=MAX_PHYSICAL_BATCH_SIZE,
+            base_path=base_path,
+            eval_after=eval_after
         )
 
         A[idx]["accuracies"] = accuracies
@@ -92,14 +97,13 @@ def RS_ML(
 
 if __name__ == "__main__":
     import warnings
-
+    import csv
     import numpy as np
     from torch.utils.tensorboard import SummaryWriter
     from torchvision.datasets import FashionMNIST
-
+    import shutil
     from datasets.cv_datasets import CV_Dataset
     from random_stopping_sg import get_privacy_spent, privacy_analysis
-    from sequential_halving_ml import SH_ML
 
     warnings.simplefilter("ignore")
 
@@ -113,8 +117,8 @@ if __name__ == "__main__":
     n, bs, MAX_PHYSICAL_BATCH_SIZE = 50000, 25, 25
     max_grad_norm = 1
     q = bs / n
-    I = 1
-    sigma = 0.7
+    I = 10000
+    sigma = 0.5
     total_delta = 1 / n
     C = 3
     order_start, order_end, step_size = 1.5, 100, 0.05
@@ -136,20 +140,30 @@ if __name__ == "__main__":
     print(
         f"Total Epsilon One training run {epsilon_adp} - Total Epsilon {C*epsilon_adp}"
     )
-    seed = 0
-    save_dir = Path(f"experiments/rs_ml/{seed}/")
-    save_dir.mkdir(parents=True, exist_ok=True)
 
+    delete_current = True
     accuracies = []
     epsilons = []
     start_seed, num_seeds = 0, 1
+    eval_after = 5
+    experiment = 1
+    csv_file = Path(f"models/rs/exp-{experiment}/exp_data.csv")
+
     for seed in range(start_seed, start_seed + num_seeds):
+        base_path = Path(f"models/rs/exp-{experiment}/seed-{seed}")
+
+        if delete_current:
+            if base_path.exists() and base_path.is_dir():
+                shutil.rmtree(base_path)
+        else:
+            base_path.mkdir(parents=True, exist_ok=True)
+
         mx_acc = RS_ML(
             sigma=sigma,
             train_ds=train_ds,
             test_ds=test_ds,
             k=k,
-            seed=0,
+            seed=seed,
             batch_size=bs,
             I=I,
             epsilon_dpsgd=epsilon_dpsgd,
@@ -161,8 +175,19 @@ if __name__ == "__main__":
             sampling=sampling,
             alpha_range=(order_start, order_end),
             step_size=step_size,
+            base_path = base_path,
+            eval_after=eval_after
         )
         accuracies.append(mx_acc)
 
-    _accs = np.array(accuracies)
-    print((C * epsilon_adp, np.mean(_accs), np.std(_accs)))
+
+        new_row = [seed, C * epsilon_adp, mx_acc]
+        file_exists = csv_file.exists() and csv_file.stat().st_size > 0
+
+        with csv_file.open("a", newline="") as f:
+            writer = csv.writer(f)
+    
+            if not file_exists:
+                writer.writerow(["seed", "C * epsilon_adp", "mx_acc"])  # Column headers
+            
+            writer.writerow(new_row)
