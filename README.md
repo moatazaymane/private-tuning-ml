@@ -2,11 +2,7 @@
 
 This repository provides to reproduce the experiments of the paper "Bandit-based hyperparameter tuning":
 
-- **Sequential Halving**
-- **Random Stopping**
 
-
----
 
 ## Installation
 
