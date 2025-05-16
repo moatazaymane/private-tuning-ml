@@ -32,7 +32,7 @@ if exp == 1:
     plt.ylabel(r"$\mathcal{R}_{\mathrm{simple}}$", fontsize=12)
     plt.legend()
     plt.tight_layout()
-    plt.savefig("figures/_sh_regret_vs_rare.png", dpi=300)
+    plt.savefig("results/_sh_regret_vs_rare.png", dpi=300)
     plt.show()
 
 
@@ -64,6 +64,6 @@ else:
     plt.ylabel(r"$\mathcal{R}_{\mathrm{simple}}$", fontsize=12)
     plt.legend()
     plt.tight_layout()
-    plt.savefig("figures/_C_sh_regret_vs_rare.png", dpi=300)
+    plt.savefig("results/_C_sh_regret_vs_rare.png", dpi=300)
     plt.show()
 

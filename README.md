@@ -6,6 +6,8 @@ This repository provides to reproduce the experiments of the paper "Bandit-based
 
 ## Installation
 
+Python version used is 3.12.9
+
 To install the required Python dependencies, run:
 
 ```bash
