@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-
+from generate_means import generate_means
 import numpy as np
 import opacus
 from opacus.accountants.analysis import rdp as privacy_analysis
@@ -22,6 +22,7 @@ def random_stopping_subgaussian(
     eps_prime=None,
     alpha_range=(1.1, 100.0),
     step_size=1,
+    multivariate = False
 ):
     """
     Parameters:
@@ -50,6 +51,7 @@ def random_stopping_subgaussian(
 
     if stopping_time_dist == "poisson":
         tau = poisson.rvs(mu)
+
     else:
         raise ValueError(
             f"Unsupported stopping time distribution: {stopping_time_dist}"
@@ -76,10 +78,17 @@ def random_stopping_subgaussian(
     for _ in range(tau):
 
         random_idx = np.random.randint(0, len(means))
-        mean = means[random_idx]
 
-        if distribution == "gaussian":
-            result = np.random.normal(mean, np.sqrt(var_proxy), size=I)
+        if not multivariate:
+            mean = means[random_idx]
+            if distribution == "gaussian":
+                result = np.random.normal(mean, np.sqrt(var_proxy), size=I)
+
+        elif distribution == "gaussian":
+            result = np.random.multivariate_normal(
+                mean=means[random_idx][:],
+                cov=var_proxy * np.eye(len(means[random_idx][:]))
+            )
 
         empirical_mean = np.mean(result)
         empirical_means.append(empirical_mean)
@@ -120,7 +129,8 @@ def find_valid_mu(
             low = mu + 1
         else:
             high = mu - 1
-
+    
+    print(f"BEST EXP TAU {best_mu}")
     return best_mu, best_eps_prime
 
 
@@ -196,18 +206,50 @@ def find_best_epsilon_prime(
     return best_epsilon_prime
 
 
+def compute_diff(rare_prob,k,  params):
+    means = generate_means(k, rare_prob=rare_prob)
+    params['means'] = means
+    _, true_mean, _ = random_stopping_subgaussian(**params)
+    return np.max(means) - true_mean
+
+
+def compute_diff_exp2(C, k, rare_prob, params, epsilon_adp):
+
+
+    exp_tau, eps_prime = find_valid_mu(
+            total_epsilon=C * epsilon_adp,
+            total_delta=params["total_delta"],
+            epsilon_dpsgd=params["epsilon_dpsgd"],
+            alpha_range=params["alpha_range"],
+            step_size=params["step_size"],
+        )
+
+    params["total_epsilon"] = C * epsilon_adp
+    params["mu"] = exp_tau
+    params["eps_prime"] = eps_prime
+    means = generate_means(k, rare_prob=rare_prob)
+    params['means'] = means
+    _, true_mean, _ = random_stopping_subgaussian(**params)
+    return np.max(means) - true_mean
+
+
 if __name__ == "__main__":
 
-    import matplotlib.pyplot as plt
-    from matplotlib.ticker import MaxNLocator
+    from generate_means import generate_means
+    import numpy as np
+    from multiprocessing import Pool
+    from functools import partial
+    exp = 1
 
-    n, bs = 50000, 64
+    num_seeds = 100
+    k = 2**6
+    C = 5
+    rares = np.linspace(0.02, 0.1, 10)
+    n, bs = 50000, 25
     q = bs / n
-    I = 1000
-    sigma = 1
+    I =  64*80000
+    sigma = 4
     total_delta = 1 / n
-    C_values = np.arange(4, 20, 3)
-
     order_start, order_end, step_size = 1.1, 100, 0.05
     orders = np.arange(1.1, 100.0, step_size)
 
@@ -220,44 +262,80 @@ if __name__ == "__main__":
         rdp=_epsilon_dpsgd, orders=orders, delta=total_delta
     )
 
-    epsilons = []
-    exp_tau_values = []
+    if exp == 1:
 
-    for C in C_values:
-
-        total_epsilon = C * epsilon_adp
-        epsilon_prime_values = []
-
-        exp_tau, _ = find_valid_mu(
-            total_epsilon=total_epsilon,
-            total_delta=1 / n,
+        exp_tau, eps_prime = find_valid_mu(
+            total_epsilon=C * epsilon_adp,
+            total_delta=total_delta,
             epsilon_dpsgd=epsilon_dpsgd,
             alpha_range=(order_start, order_end),
             step_size=step_size,
         )
 
-        epsilons.append(total_epsilon)
-        print((total_epsilon, exp_tau))
-        exp_tau_values.append(exp_tau)
+        # Partial function that binds 'k' and 'params' to 'compute_diff'
+        per_seed_diffs = np.zeros((num_seeds, len(rares)))
 
-    exp_tau_values = np.array(exp_tau_values)
-    plt.style.use("seaborn-v0_8-darkgrid")
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(epsilons, exp_tau_values, linestyle="-", linewidth=2, color="tab:blue")
-    ax.fill_between(
-        epsilons,
-        exp_tau_values - np.sqrt(exp_tau_values),
-        exp_tau_values + np.sqrt(exp_tau_values),
-        color="tab:blue",
-        alpha=0.3,
-    )
+        for seed in range(num_seeds):
+            params = {
+                "I": I,
+                "total_epsilon": C * epsilon_adp,
+                "total_delta": total_delta,
+                "mu": exp_tau,
+                "eps_prime": eps_prime,
+                "seed": seed,
+                "var_proxy": 1 / 4,
+                "distribution": "gaussian",
+                "stopping_time_dist": "poisson",
+                "epsilon_dpsgd": epsilon_dpsgd,
+                "alpha_range": (order_start, order_end),
+                "step_size": step_size
+            }
 
-    ax.set_xlabel(r"$\epsilon$", fontsize=14)
-    ax.set_ylabel(r"$\mathbb{E}\left[\tau\right]$", fontsize=14)
-    ax.tick_params(axis="both", which="major", labelsize=12)
-    ax.set_yscale("log")
-    # ax.grid(True, linestyle='--', alpha=0.6)
-    # plt.savefig('figures/exp_tau_epsilon_rs.png', dpi=300, bbox_inches='tight')
-    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            compute_diff_with_params = partial(compute_diff, k=k, params=params)
+            with Pool() as pool:
+                diffs = pool.map(compute_diff_with_params, rares)
 
-    plt.show()
+            per_seed_diffs[seed, :] = diffs
+
+        mean_diffs = np.mean(per_seed_diffs, axis=0)
+        std_diffs = np.std(per_seed_diffs, axis=0)
+
+        import os 
+        os.makedirs("results", exist_ok=True)
+        np.save("results/5_multi_sg_rs_mean_diffs.npy", mean_diffs)
+        np.save("results/5_multi_sg_rs_std_diffs.npy", std_diffs)
+    
+    else:
+        C_values = np.arange(3, 8, 1)
+        r = .05
+        # Partial function that binds 'k' and 'params' to 'compute_diff'
+        per_seed_diffs = np.zeros((num_seeds, len(C_values)))
+
+
+
+        for seed in range(num_seeds):
+
+            params = {
+                "I": I,
+                "total_delta": total_delta,
+                "seed": seed,
+                "var_proxy": 1 / 4,
+                "distribution": "gaussian",
+                "stopping_time_dist": "poisson",
+                "epsilon_dpsgd": epsilon_dpsgd,
+                "alpha_range": (order_start, order_end),
+                "step_size": step_size
+                }
+            compute_diff_with_params = partial(compute_diff_exp2, k=k, params=params, epsilon_adp = epsilon_adp, rare_prob = r)
+            with Pool() as pool:
+                diffs = pool.map(compute_diff_with_params, C_values)
+
+            per_seed_diffs[seed, :] = diffs
+
+        mean_diffs = np.mean(per_seed_diffs, axis=0)
+        std_diffs = np.std(per_seed_diffs, axis=0)
+
+        import os 
+        os.makedirs("results", exist_ok=True)
+        np.save("results/C_sg_rs_mean_diffs.npy", mean_diffs)
+        np.save("results/C_sg_rs_std_diffs.npy", std_diffs)
